@@ -439,22 +439,21 @@ class VolatilityBreakoutBot:
         """종목별 전략 처리"""
         try:
             def fetch_ohlcv():
-                return pyupbit.get_ohlcv(ticker, interval=INTERVAL, count=60)
+                return pyupbit.get_ohlcv(ticker, interval=INTERVAL, count=40)
 
             df = retry_on_failure(fetch_ohlcv, max_retries=2, logger=logger)
 
-            if not validate_dataframe(df, min_length=40):
+            if not validate_dataframe(df, min_length=20):
                 logger.debug(f"[{ticker}] OHLCV 데이터 부족 또는 유효하지 않음")
                 return
 
-            # 이동평균 계산
+            # 이동평균 계산 (SMA5, SMA10, SMA20만 사용)
             df["sma5"] = df["close"].rolling(5, min_periods=5).mean()
             df["sma10"] = df["close"].rolling(10, min_periods=10).mean()
             df["sma20"] = df["close"].rolling(20, min_periods=20).mean()
-            df["sma40"] = df["close"].rolling(40, min_periods=40).mean()
 
             # NaN 체크
-            if df[["sma5", "sma10", "sma20", "sma40"]].isnull().any().any():
+            if df[["sma5", "sma10", "sma20"]].isnull().any().any():
                 logger.debug(f"[{ticker}] 이동평균 계산 결과에 NaN 존재")
                 return
 
@@ -481,13 +480,11 @@ class VolatilityBreakoutBot:
                 sma5_prev = prev["sma5"]
                 sma10_prev = prev["sma10"]
                 sma20_prev = prev["sma20"]
-                sma40_prev = prev["sma40"]
 
-                # 정배열 체크
+                # 정배열 체크 (SMA5 > SMA10 > SMA20)
                 is_ma_aligned = (
                     sma5_prev > sma10_prev and
-                    sma10_prev > sma20_prev and
-                    sma20_prev > sma40_prev
+                    sma10_prev > sma20_prev
                 )
 
                 if is_ma_aligned:
@@ -499,7 +496,7 @@ class VolatilityBreakoutBot:
                         self.entry_price_map[ticker] = None
                         return
 
-                    entry_price = prev["close"] + range_prev * (K * K)  # 원래 공식 복원
+                    entry_price = prev["close"] + range_prev * K
 
                     # entry_price 유효성 검사
                     if not validate_price(entry_price):
@@ -511,7 +508,7 @@ class VolatilityBreakoutBot:
                     logger.info(f"[{ticker}] 새 캔들 시작! 정배열 ✓, entry={entry_price:,.1f}, close={prev['close']:,.1f}, range={range_prev:,.1f}")
                 else:
                     self.entry_price_map[ticker] = None
-                    logger.info(f"[{ticker}] 정배열 조건 미충족 (SMA5:{sma5_prev:.0f} > SMA10:{sma10_prev:.0f} > SMA20:{sma20_prev:.0f} > SMA40:{sma40_prev:.0f})")
+                    logger.info(f"[{ticker}] 정배열 조건 미충족 (SMA5:{sma5_prev:.0f} > SMA10:{sma10_prev:.0f} > SMA20:{sma20_prev:.0f})")
                     return
 
             # 돌파 체크 (포지션이 없을 때만)
