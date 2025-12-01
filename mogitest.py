@@ -65,7 +65,7 @@ def setup_logging():
 
     # 콘솔 핸들러
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG)  # DEBUG로 변경하여 더 많은 정보 출력
     console_formatter = logging.Formatter('[%(levelname)s] %(message)s')
     console_handler.setFormatter(console_formatter)
 
@@ -499,7 +499,7 @@ class VolatilityBreakoutBot:
                         self.entry_price_map[ticker] = None
                         return
 
-                    entry_price = prev["close"] + range_prev * K
+                    entry_price = prev["close"] + range_prev * (K * K)  # 원래 공식 복원
 
                     # entry_price 유효성 검사
                     if not validate_price(entry_price):
@@ -508,10 +508,10 @@ class VolatilityBreakoutBot:
                         return
 
                     self.entry_price_map[ticker] = entry_price
-                    logger.debug(f"[{ticker}] 새 캔들, 정배열 ON, entry={entry_price:,.1f}")
+                    logger.info(f"[{ticker}] 새 캔들 시작! 정배열 ✓, entry={entry_price:,.1f}, close={prev['close']:,.1f}, range={range_prev:,.1f}")
                 else:
                     self.entry_price_map[ticker] = None
-                    logger.debug(f"[{ticker}] 새 캔들, 정배열 아님")
+                    logger.info(f"[{ticker}] 정배열 조건 미충족 (SMA5:{sma5_prev:.0f} > SMA10:{sma10_prev:.0f} > SMA20:{sma20_prev:.0f} > SMA40:{sma40_prev:.0f})")
                     return
 
             # 돌파 체크 (포지션이 없을 때만)
@@ -525,6 +525,9 @@ class VolatilityBreakoutBot:
                 if not validate_price(current_high):
                     logger.warning(f"[{ticker}] 유효하지 않은 현재 고가: {current_high}")
                     return
+
+                # 돌파 상황 로깅
+                logger.debug(f"[{ticker}] 돌파 체크: 현재고가={current_high:,.1f}, entry={entry_price:,.1f}, 차이={current_high-entry_price:,.1f}")
 
                 if current_high >= entry_price:
                     # 돌파 발생
