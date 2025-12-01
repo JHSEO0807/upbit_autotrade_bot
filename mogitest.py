@@ -248,9 +248,11 @@ class VolatilityBreakoutBot:
             def fetch_tickers():
                 return pyupbit.get_tickers(fiat="KRW")
 
-            tickers = retry_on_failure(fetch_tickers, logger=logger)
+            # 재시도 횟수를 늘리고 대기 시간도 증가
+            tickers = retry_on_failure(fetch_tickers, max_retries=5, delay=3.0, logger=logger)
             if not tickers:
-                logger.error("티커 목록 조회 실패")
+                logger.error("티커 목록 조회 실패. 네트워크 연결을 확인하세요.")
+                logger.warning("기존 유니버스를 유지합니다.")
                 return
 
             selected = []
@@ -559,9 +561,20 @@ class VolatilityBreakoutBot:
         logger.info(f"INTERVAL={INTERVAL}, DRY_RUN={DRY_RUN}, K={K}")
         logger.info(f"초기 가상 KRW: {INITIAL_VIRTUAL_KRW:,.0f}원")
         logger.info("=" * 60)
+        logger.info("네트워크 연결 확인 중...")
 
-        # 최초 유니버스 생성
-        self.build_universe()
+        # 최초 유니버스 생성 (실패 시 재시도)
+        retry_count = 0
+        while not self.universe and retry_count < 10:
+            self.build_universe()
+            if not self.universe:
+                retry_count += 1
+                logger.warning(f"유니버스 구축 실패. 30초 후 재시도... ({retry_count}/10)")
+                time.sleep(30)
+
+        if not self.universe:
+            logger.critical("유니버스 구축에 계속 실패합니다. 네트워크 연결을 확인하세요.")
+            logger.info("네트워크 연결이 복구되면 자동으로 유니버스가 갱신됩니다.")
 
         while True:
             try:
@@ -573,8 +586,9 @@ class VolatilityBreakoutBot:
                     self.build_universe()
 
                 if not self.universe:
-                    logger.info("유니버스에 종목이 없습니다. 대기 중...")
-                    time.sleep(SLEEP_SEC)
+                    logger.info("유니버스에 종목이 없습니다. 1분 후 유니버스 재구축 시도...")
+                    time.sleep(60)
+                    self.build_universe()
                     continue
 
                 # 각 종목 처리
