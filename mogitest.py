@@ -82,31 +82,28 @@ logger = setup_logging()
 def retry_on_failure(func, max_retries=MAX_RETRIES, delay=RETRY_DELAY,
                      backoff=BACKOFF_FACTOR, logger=None):
     """
-    함수 실행 실패 시 재시도하는 데코레이터
+    함수 실행 실패 시 재시도
     """
-    def wrapper(*args, **kwargs):
-        last_exception = None
-        current_delay = delay
+    last_exception = None
+    current_delay = delay
 
-        for attempt in range(max_retries):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                last_exception = e
-                if logger:
-                    logger.warning(
-                        f"함수 {func.__name__} 실행 실패 (시도 {attempt + 1}/{max_retries}): {e}"
-                    )
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            last_exception = e
+            if logger:
+                logger.warning(
+                    f"함수 {func.__name__} 실행 실패 (시도 {attempt + 1}/{max_retries}): {e}"
+                )
 
-                if attempt < max_retries - 1:
-                    time.sleep(current_delay)
-                    current_delay *= backoff
+            if attempt < max_retries - 1:
+                time.sleep(current_delay)
+                current_delay *= backoff
 
-        if logger:
-            logger.error(f"함수 {func.__name__} 최종 실패: {last_exception}")
-        return None
-
-    return wrapper
+    if logger:
+        logger.error(f"함수 {func.__name__} 최종 실패: {last_exception}")
+    return None
 
 
 def validate_price(price: Optional[float]) -> bool:
