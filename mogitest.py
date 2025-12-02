@@ -257,6 +257,10 @@ class VolatilityBreakoutBot:
 
             selected = []
             failed_count = 0
+            total_checked = 0
+            skip_reasons = {"등락률음수": 0, "거래대금부족": 0, "데이터없음": 0, "에러": 0}
+
+            logger.info(f"총 {len(tickers)}개 종목 검사 중...")
 
             for i, ticker in enumerate(tickers):
                 try:
@@ -270,6 +274,7 @@ class VolatilityBreakoutBot:
                     df_day = retry_on_failure(fetch_ohlcv, max_retries=2, logger=logger)
 
                     if not validate_dataframe(df_day, min_length=2):
+                        skip_reasons["데이터없음"] += 1
                         continue
 
                     prev_close = df_day["close"].iloc[-2]
@@ -277,28 +282,48 @@ class VolatilityBreakoutBot:
                     value = df_day["value"].iloc[-1]
 
                     if not validate_price(prev_close) or not validate_price(last_close):
+                        skip_reasons["데이터없음"] += 1
                         continue
 
                     if prev_close == 0:
+                        skip_reasons["데이터없음"] += 1
                         continue
 
                     change_rate = (last_close / prev_close - 1) * 100.0
+                    total_checked += 1
 
+                    # 조건 체크 및 상세 로그
                     if change_rate > 0 and value >= VOLUME_THRESHOLD:
                         selected.append(ticker)
-                        logger.debug(f"{ticker}: 등락률={change_rate:.2f}%, 거래대금={value:,.0f}")
+                        logger.info(f"✓ {ticker}: 등락률={change_rate:.2f}%, 거래대금={value/1e9:.1f}억원 → 유니버스 추가")
+                    else:
+                        if change_rate <= 0:
+                            skip_reasons["등락률음수"] += 1
+                        elif value < VOLUME_THRESHOLD:
+                            skip_reasons["거래대금부족"] += 1
+
+                        # 상위 10개 종목은 상세 정보 출력
+                        if total_checked <= 10:
+                            logger.info(f"✗ {ticker}: 등락률={change_rate:.2f}%, 거래대금={value/1e9:.1f}억원")
 
                 except Exception as e:
                     failed_count += 1
-                    logger.debug(f"[{ticker}] 유니버스 검사 실패: {e}")
+                    skip_reasons["에러"] += 1
+                    logger.warning(f"[{ticker}] 유니버스 검사 실패: {e}")
                     continue
 
             self.universe = selected
             self.last_universe_update = datetime.now()
 
-            logger.info(f"유니버스 업데이트 완료: {len(self.universe)}개 종목 (실패: {failed_count})")
+            logger.info("=" * 60)
+            logger.info(f"유니버스 업데이트 완료: {len(self.universe)}개 종목")
+            logger.info(f"총 검사: {total_checked}개 | 스킵 사유: {skip_reasons}")
             if self.universe:
-                logger.info(f"감시 리스트: {', '.join(self.universe[:10])}{'...' if len(self.universe) > 10 else ''}")
+                logger.info(f"✓ 감시 리스트: {', '.join(self.universe)}")
+            else:
+                logger.warning("⚠ 조건을 만족하는 종목이 없습니다!")
+                logger.info(f"현재 조건: 전일대비 상승률 > 0%, 거래대금 >= {VOLUME_THRESHOLD/1e9:.0f}억원")
+            logger.info("=" * 60)
 
             # 유니버스에서 제거된 종목 정리
             self.cleanup_old_positions()
@@ -507,10 +532,18 @@ class VolatilityBreakoutBot:
                         return
 
                     self.entry_price_map[ticker] = entry_price
-                    logger.info(f"[{ticker}] 새 캔들 시작! 정배열 ✓, entry={entry_price:,.1f}, close={prev['close']:,.1f}, range={range_prev:,.1f}")
+                    logger.info(f"🔔 [{ticker}] 새 캔들 시작! 정배열 ✓")
+                    logger.info(f"   Entry Price: {entry_price:,.0f}원 (종가 {prev['close']:,.0f} + 변동폭 {range_prev:,.0f} × {K})")
+                    logger.info(f"   이평선: SMA5={sma5_prev:,.0f} > SMA10={sma10_prev:,.0f} > SMA20={sma20_prev:,.0f}")
                 else:
                     self.entry_price_map[ticker] = None
-                    logger.info(f"[{ticker}] 정배열 조건 미충족 (SMA5:{sma5_prev:.0f} > SMA10:{sma10_prev:.0f} > SMA20:{sma20_prev:.0f})")
+                    # 정배열 실패 상세 정보
+                    ma_status = []
+                    if sma5_prev <= sma10_prev:
+                        ma_status.append(f"SMA5({sma5_prev:.0f}) ≤ SMA10({sma10_prev:.0f})")
+                    if sma10_prev <= sma20_prev:
+                        ma_status.append(f"SMA10({sma10_prev:.0f}) ≤ SMA20({sma20_prev:.0f})")
+                    logger.info(f"✗ [{ticker}] 정배열 조건 미충족: {' & '.join(ma_status)}")
                     return
 
             # 돌파 체크 (포지션이 없을 때만)
@@ -525,11 +558,12 @@ class VolatilityBreakoutBot:
                     logger.warning(f"[{ticker}] 유효하지 않은 현재 고가: {current_high}")
                     return
 
-                # 돌파 상황 로깅
-                logger.debug(f"[{ticker}] 돌파 체크: 현재고가={current_high:,.1f}, entry={entry_price:,.1f}, 차이={current_high-entry_price:,.1f}")
+                # 돌파 상황 로깅 (진행률 표시)
+                diff = current_high - entry_price
+                progress = (current_high / entry_price - 1) * 100 if entry_price > 0 else 0
 
                 if current_high >= entry_price:
-                    # 돌파 발생
+                    # 돌파 발생!
                     if DRY_RUN:
                         amount_krw = self.virtual_krw * ORDER_KRW_PORTION
                     else:
@@ -543,13 +577,17 @@ class VolatilityBreakoutBot:
                         krw_balance = retry_on_failure(get_balance, logger=logger) or 0.0
                         amount_krw = krw_balance * ORDER_KRW_PORTION
 
+                    logger.info("🚀" * 10)
                     logger.info(
-                        f"[SIGNAL][{ticker}] 변동성 돌파! "
-                        f"high={current_high:,.1f}, entry={entry_price:,.1f}"
+                        f"🚀 [{ticker}] 변동성 돌파 발생! 매수 신호!"
                     )
+                    logger.info(f"   현재 고가: {current_high:,.0f}원 | Entry: {entry_price:,.0f}원 | 돌파: +{diff:,.0f}원 ({progress:+.2f}%)")
 
                     self.buy_market(ticker, amount_krw)
                     self.in_position[ticker] = True
+                else:
+                    # 돌파 대기 중
+                    logger.debug(f"[{ticker}] 돌파 대기: {current_high:,.0f}원 / {entry_price:,.0f}원 ({progress:+.2f}%)")
 
         except Exception as e:
             logger.error(f"[{ticker}] process_symbol 예외: {e}", exc_info=True)
