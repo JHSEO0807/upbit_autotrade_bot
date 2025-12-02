@@ -13,6 +13,7 @@ import time
 import json
 import logging
 import sys
+import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
@@ -241,75 +242,72 @@ class VolatilityBreakoutBot:
         return None
 
     def build_universe(self):
-        """유니버스 구축"""
+        """유니버스 구축 (최적화 버전 - 업비트 ticker API 활용)"""
         logger.info("유니버스 계산 시작...")
 
         try:
+            # 1단계: KRW 마켓 티커 목록 가져오기
             def fetch_tickers():
                 return pyupbit.get_tickers(fiat="KRW")
 
-            # 재시도 횟수를 늘리고 대기 시간도 증가
             tickers = retry_on_failure(fetch_tickers, max_retries=5, delay=3.0, logger=logger)
             if not tickers:
                 logger.error("티커 목록 조회 실패. 네트워크 연결을 확인하세요.")
                 logger.warning("기존 유니버스를 유지합니다.")
                 return
 
+            logger.info(f"총 {len(tickers)}개 KRW 마켓 종목 발견")
+
+            # 2단계: 업비트 ticker API로 한번에 모든 종목 정보 조회
+            def fetch_ticker_data():
+                # 업비트 API는 한번에 100개까지 조회 가능하므로 분할
+                all_ticker_data = []
+                batch_size = 100
+
+                for i in range(0, len(tickers), batch_size):
+                    batch = tickers[i:i + batch_size]
+                    markets = ','.join(batch)
+                    url = f"https://api.upbit.com/v1/ticker?markets={markets}"
+
+                    response = requests.get(url, timeout=10)
+                    response.raise_for_status()
+                    all_ticker_data.extend(response.json())
+
+                    # API 호출 간격
+                    if i + batch_size < len(tickers):
+                        time.sleep(0.1)
+
+                return all_ticker_data
+
+            ticker_data = retry_on_failure(fetch_ticker_data, max_retries=5, delay=3.0, logger=logger)
+            if not ticker_data:
+                logger.error("Ticker 정보 조회 실패. 네트워크 연결을 확인하세요.")
+                logger.warning("기존 유니버스를 유지합니다.")
+                return
+
+            # 3단계: 조건에 맞는 종목 필터링
             selected = []
-            failed_count = 0
-            total_checked = 0
-            skip_reasons = {"등락률음수": 0, "거래대금부족": 0, "데이터없음": 0, "에러": 0}
+            skip_reasons = {"등락률음수": 0, "거래대금부족": 0, "데이터없음": 0}
 
-            logger.info(f"총 {len(tickers)}개 종목 검사 중...")
-
-            for i, ticker in enumerate(tickers):
+            for data in ticker_data:
                 try:
-                    # API 호출 속도 제한 (초당 10회로 제한)
-                    if i > 0 and i % 10 == 0:
-                        time.sleep(1)
+                    market = data.get('market')
+                    change_rate = data.get('signed_change_rate', 0) * 100  # 소수점 -> 퍼센트
+                    acc_trade_price_24h = data.get('acc_trade_price_24h', 0)  # 24시간 누적 거래대금
 
-                    def fetch_ohlcv():
-                        return pyupbit.get_ohlcv(ticker, interval="day", count=2)
-
-                    df_day = retry_on_failure(fetch_ohlcv, max_retries=2, logger=logger)
-
-                    if not validate_dataframe(df_day, min_length=2):
-                        skip_reasons["데이터없음"] += 1
-                        continue
-
-                    prev_close = df_day["close"].iloc[-2]
-                    last_close = df_day["close"].iloc[-1]
-                    value = df_day["value"].iloc[-1]
-
-                    if not validate_price(prev_close) or not validate_price(last_close):
-                        skip_reasons["데이터없음"] += 1
-                        continue
-
-                    if prev_close == 0:
-                        skip_reasons["데이터없음"] += 1
-                        continue
-
-                    change_rate = (last_close / prev_close - 1) * 100.0
-                    total_checked += 1
-
-                    # 조건 체크 및 상세 로그
-                    if change_rate > 0 and value >= VOLUME_THRESHOLD:
-                        selected.append(ticker)
-                        logger.info(f"✓ {ticker}: 등락률={change_rate:.2f}%, 거래대금={value/1e9:.1f}억원 → 유니버스 추가")
+                    # 조건 체크
+                    if change_rate > 0 and acc_trade_price_24h >= VOLUME_THRESHOLD:
+                        selected.append(market)
+                        logger.info(f"✓ {market}: 등락률={change_rate:+.2f}%, 거래대금={acc_trade_price_24h/1e9:.1f}억원 → 유니버스 추가")
                     else:
                         if change_rate <= 0:
                             skip_reasons["등락률음수"] += 1
-                        elif value < VOLUME_THRESHOLD:
+                        elif acc_trade_price_24h < VOLUME_THRESHOLD:
                             skip_reasons["거래대금부족"] += 1
 
-                        # 상위 10개 종목은 상세 정보 출력
-                        if total_checked <= 10:
-                            logger.info(f"✗ {ticker}: 등락률={change_rate:.2f}%, 거래대금={value/1e9:.1f}억원")
-
                 except Exception as e:
-                    failed_count += 1
-                    skip_reasons["에러"] += 1
-                    logger.warning(f"[{ticker}] 유니버스 검사 실패: {e}")
+                    skip_reasons["데이터없음"] += 1
+                    logger.debug(f"종목 데이터 파싱 실패: {e}")
                     continue
 
             self.universe = selected
@@ -317,19 +315,19 @@ class VolatilityBreakoutBot:
 
             logger.info("=" * 60)
             logger.info(f"유니버스 업데이트 완료: {len(self.universe)}개 종목")
-            logger.info(f"총 검사: {total_checked}개 | 스킵 사유: {skip_reasons}")
+            logger.info(f"총 검사: {len(ticker_data)}개 | 스킵 사유: {skip_reasons}")
             if self.universe:
                 logger.info(f"✓ 감시 리스트: {', '.join(self.universe)}")
             else:
                 logger.warning("⚠ 조건을 만족하는 종목이 없습니다!")
-                logger.info(f"현재 조건: 전일대비 상승률 > 0%, 거래대금 >= {VOLUME_THRESHOLD/1e9:.0f}억원")
+                logger.info(f"현재 조건: 전일대비 상승률 > 0%, 24시간 거래대금 >= {VOLUME_THRESHOLD/1e9:.0f}억원")
             logger.info("=" * 60)
 
             # 유니버스에서 제거된 종목 정리
             self.cleanup_old_positions()
 
         except Exception as e:
-            logger.error(f"유니버스 구축 중 예외 발생: {e}")
+            logger.error(f"유니버스 구축 중 예외 발생: {e}", exc_info=True)
 
     def buy_market(self, ticker: str, amount_krw: float):
         """시장가 매수"""
