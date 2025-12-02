@@ -521,7 +521,8 @@ class VolatilityBreakoutBot:
                         self.entry_price_map[ticker] = None
                         return
 
-                    entry_price = prev["close"] + range_prev * K
+                    # 래리 윌리엄스 변동성 돌파 공식: 당일 시가 + 전일 변동폭 × K
+                    entry_price = curr["open"] + range_prev * K
 
                     # entry_price 유효성 검사
                     if not validate_price(entry_price):
@@ -531,7 +532,7 @@ class VolatilityBreakoutBot:
 
                     self.entry_price_map[ticker] = entry_price
                     logger.info(f"🔔 [{ticker}] 새 캔들 시작! 정배열 ✓")
-                    logger.info(f"   Entry Price: {entry_price:,.0f}원 (종가 {prev['close']:,.0f} + 변동폭 {range_prev:,.0f} × {K})")
+                    logger.info(f"   Entry Price: {entry_price:,.0f}원 (당일 시가 {curr['open']:,.0f} + 전일 변동폭 {range_prev:,.0f} × {K})")
                     logger.info(f"   이평선: SMA5={sma5_prev:,.0f} > SMA10={sma10_prev:,.0f} > SMA20={sma20_prev:,.0f}")
                 else:
                     self.entry_price_map[ticker] = None
