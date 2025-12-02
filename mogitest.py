@@ -482,61 +482,41 @@ class VolatilityBreakoutBot:
                 logger.debug(f"[{ticker}] 이동평균 계산 결과에 NaN 존재")
                 return
 
-            prev = df.iloc[-2]
-            curr = df.iloc[-1]
+            # 완료봉과 현재봉
+            prev = df.iloc[-2]  # 완료봉
+            curr = df.iloc[-1]  # 진행중인 봉
 
             prev_time = prev.name
             curr_time = curr.name
 
-            # 새 캔들 시작 체크
+            # ===== 1) 새 캔들 시작 시 이전 포지션 청산 =====
             stored_time = self.current_bar_time.get(ticker)
 
             if stored_time is None or curr_time != stored_time:
-                # 이전 포지션 청산
+                # 새 캔들 시작!
                 if self.in_position.get(ticker, False):
                     logger.info(f"[{ticker}] 새 캔들 시작 → 포지션 청산")
                     self.sell_market(ticker)
                     self.in_position[ticker] = False
 
-                # 새 캔들 시간 갱신
+                # 시간 갱신
                 self.current_bar_time[ticker] = curr_time
 
-                # entry_price 계산
+            # ===== 2) 완료봉 기준으로 매수 조건 평가 (매 루프마다) =====
+            if not self.in_position.get(ticker, False):
+                # 완료봉의 이평선
                 sma5_prev = prev["sma5"]
                 sma10_prev = prev["sma10"]
                 sma20_prev = prev["sma20"]
 
-                # 정배열 체크 (SMA5 > SMA10 > SMA20)
+                # 정배열 체크
                 is_ma_aligned = (
                     sma5_prev > sma10_prev and
                     sma10_prev > sma20_prev
                 )
 
-                if is_ma_aligned:
-                    range_prev = prev["high"] - prev["low"]
-
-                    # 변동성이 너무 작으면 스킵
-                    if range_prev <= 0:
-                        logger.debug(f"[{ticker}] 변동성이 0 이하")
-                        self.entry_price_map[ticker] = None
-                        return
-
-                    # 래리 윌리엄스 변동성 돌파 공식: 당일 시가 + 전일 변동폭 × K
-                    entry_price = curr["open"] + range_prev * K
-
-                    # entry_price 유효성 검사
-                    if not validate_price(entry_price):
-                        logger.warning(f"[{ticker}] 유효하지 않은 entry_price: {entry_price}")
-                        self.entry_price_map[ticker] = None
-                        return
-
-                    self.entry_price_map[ticker] = entry_price
-                    logger.info(f"🔔 [{ticker}] 새 캔들 시작! 정배열 ✓")
-                    logger.info(f"   Entry Price: {entry_price:,.0f}원 (당일 시가 {curr['open']:,.0f} + 전일 변동폭 {range_prev:,.0f} × {K})")
-                    logger.info(f"   이평선: SMA5={sma5_prev:,.0f} > SMA10={sma10_prev:,.0f} > SMA20={sma20_prev:,.0f}")
-                else:
-                    self.entry_price_map[ticker] = None
-                    # 정배열 실패 상세 정보
+                if not is_ma_aligned:
+                    # 정배열 아님
                     ma_status = []
                     if sma5_prev <= sma10_prev:
                         ma_status.append(f"SMA5({sma5_prev:.0f}) ≤ SMA10({sma10_prev:.0f})")
@@ -545,28 +525,39 @@ class VolatilityBreakoutBot:
                     logger.info(f"✗ [{ticker}] 정배열 조건 미충족: {' & '.join(ma_status)}")
                     return
 
-            # 돌파 체크 (포지션이 없을 때만)
-            if not self.in_position.get(ticker, False):
-                entry_price = self.entry_price_map.get(ticker)
-                if entry_price is None:
+                # 정배열 OK! 변동성 돌파 체크
+                range_prev = prev["high"] - prev["low"]
+
+                if range_prev <= 0:
+                    logger.debug(f"[{ticker}] 변동성이 0 이하")
                     return
 
+                # entry_price = 현재봉 시가 + 전일 변동폭 × K
+                entry_price = curr["open"] + range_prev * K
+
+                if not validate_price(entry_price):
+                    logger.warning(f"[{ticker}] 유효하지 않은 entry_price: {entry_price}")
+                    return
+
+                # 현재봉의 고가와 현재가
                 current_high = curr["high"]
-                current_price = curr["close"]  # 현재가
+                current_price = curr["close"]
 
                 if not validate_price(current_high):
                     logger.warning(f"[{ticker}] 유효하지 않은 현재 고가: {current_high}")
                     return
 
-                # 돌파 상황 로깅 (진행률 표시)
+                # 진행률 계산
                 diff = current_high - entry_price
                 progress = (current_high / entry_price - 1) * 100 if entry_price > 0 else 0
 
-                # 실시간 모니터링 정보 (매번 출력)
+                # 실시간 모니터링
                 logger.info(f"📊 [{ticker}] 현재가: {current_price:,.0f}원 | 현재고가: {current_high:,.0f}원 | 목표가: {entry_price:,.0f}원 | 진행률: {progress:+.2f}%")
+                logger.info(f"   정배열 ✓ SMA5={sma5_prev:,.0f} > SMA10={sma10_prev:,.0f} > SMA20={sma20_prev:,.0f}")
 
+                # 변동성 돌파 체크: 현재 고가가 이미 entry_price를 넘었는지
                 if current_high >= entry_price:
-                    # 돌파 발생!
+                    # 돌파 발생! 즉시 매수
                     if DRY_RUN:
                         amount_krw = self.virtual_krw * ORDER_KRW_PORTION
                     else:
@@ -581,9 +572,7 @@ class VolatilityBreakoutBot:
                         amount_krw = krw_balance * ORDER_KRW_PORTION
 
                     logger.info("🚀" * 10)
-                    logger.info(
-                        f"🚀 [{ticker}] 변동성 돌파 발생! 매수 신호!"
-                    )
+                    logger.info(f"🚀 [{ticker}] 변동성 돌파 발생! 즉시 매수!")
                     logger.info(f"   현재 고가: {current_high:,.0f}원 | Entry: {entry_price:,.0f}원 | 돌파: +{diff:,.0f}원 ({progress:+.2f}%)")
 
                     self.buy_market(ticker, amount_krw)
