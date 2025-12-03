@@ -131,7 +131,7 @@ class UpbitAutoTrader:
             pass  # Silent fail for Excel logging
 
     def get_top_gainers(self):
-        """Get top gainers by daily change rate with volume filter (optimized with batch API call)"""
+        """Get coins that surged 5%+ above their recent 10-candle average price"""
         try:
             # Get all KRW market tickers
             tickers = pyupbit.get_tickers(fiat="KRW")
@@ -155,25 +155,40 @@ class UpbitAutoTrader:
             for data in ticker_data:
                 try:
                     ticker = data['market']
-                    change_rate = data['signed_change_rate'] * 100  # Convert to percentage
                     volume_krw = data['acc_trade_price_24h']  # 24-hour accumulated trade price
                     current_price = data['trade_price']
 
                     # Filter by minimum volume (20 billion KRW)
-                    if volume_krw >= MIN_VOLUME:
+                    if volume_krw < MIN_VOLUME:
+                        continue
+
+                    # Get last 10 candles to calculate average price
+                    df = pyupbit.get_ohlcv(ticker, interval=CANDLE_INTERVAL, count=10)
+                    if df is None or len(df) < 10:
+                        continue
+
+                    # Calculate average price of last 10 candles
+                    avg_price = df['close'].mean()
+
+                    # Calculate surge rate: (current - average) / average * 100
+                    surge_rate = ((current_price - avg_price) / avg_price) * 100
+
+                    # Only include coins with 5%+ surge
+                    if surge_rate >= 5.0:
                         market_data.append({
                             'ticker': ticker,
-                            'change_rate': change_rate,
+                            'surge_rate': surge_rate,
                             'volume_krw': volume_krw,
-                            'current_price': current_price
+                            'current_price': current_price,
+                            'avg_price': avg_price
                         })
 
                 except Exception as e:
                     logger.warning(f"Failed to parse data for {data.get('market', 'unknown')}: {e}")
                     continue
 
-            # Sort by change rate and select top N
-            market_data.sort(key=lambda x: x['change_rate'], reverse=True)
+            # Sort by surge rate and select top N
+            market_data.sort(key=lambda x: x['surge_rate'], reverse=True)
             top_coins = market_data[:TOP_GAINERS_COUNT]
 
             return [coin['ticker'] for coin in top_coins]
