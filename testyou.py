@@ -91,6 +91,9 @@ class UpbitAutoTrader:
     def save_trade_to_excel(self, trade):
         """Save trade to Excel file (append mode)"""
         try:
+            import warnings
+            warnings.filterwarnings('ignore', category=FutureWarning)
+
             # Prepare trade data for Excel
             trade_data = {
                 '시간': trade['time'].strftime('%Y-%m-%d %H:%M:%S'),
@@ -107,9 +110,9 @@ class UpbitAutoTrader:
                 trade_data['손익(원)'] = trade.get('profit', 0)
                 trade_data['수익률(%)'] = trade.get('profit_rate', 0)
             else:
-                trade_data['매수가격'] = None
-                trade_data['손익(원)'] = None
-                trade_data['수익률(%)'] = None
+                trade_data['매수가격'] = 0
+                trade_data['손익(원)'] = 0
+                trade_data['수익률(%)'] = 0
 
             # Convert to DataFrame
             new_row = pd.DataFrame([trade_data])
@@ -125,7 +128,7 @@ class UpbitAutoTrader:
             updated_df.to_excel(TRADE_LOG_FILE, index=False, engine='openpyxl')
 
         except Exception as e:
-            logger.error(f"엑셀 저장 중 오류: {e}")
+            pass  # Silent fail for Excel logging
 
     def get_top_gainers(self):
         """Get top gainers by daily change rate with volume filter (optimized with batch API call)"""
