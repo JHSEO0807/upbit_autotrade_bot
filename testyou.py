@@ -324,7 +324,8 @@ class UpbitAutoTrader:
                 total_trades = self.win_count + self.lose_count
                 win_rate = (self.win_count / total_trades * 100) if total_trades > 0 else 0
 
-                logger.info(f"[매수체결] {ticker} | {current_price:,.0f}원 x {coin_amount:.4f}개 = {buy_amount:,.0f}원 | 승률: {win_rate:.1f}%")
+                time_str = datetime.now().strftime('%H:%M:%S')
+                logger.info(f"[매수] {ticker} {time_str} {current_price:,.0f}원")
                 return True
             else:
                 # Real buy
@@ -398,8 +399,8 @@ class UpbitAutoTrader:
                 total_trades = self.win_count + self.lose_count
                 win_rate = (self.win_count / total_trades * 100) if total_trades > 0 else 0
 
-                logger.info(f"[매도체결-{result_text}] {ticker} | {avg_buy_price:,.0f}->{current_price:,.0f}원 | "
-                          f"손익: {profit:+,.0f}원({profit_rate:+.2f}%) | 승률: {win_rate:.1f}%({self.win_count}승{self.lose_count}패)")
+                time_str = datetime.now().strftime('%H:%M:%S')
+                logger.info(f"[매도] {ticker} {time_str} {current_price:,.0f}원 {profit_rate:+.2f}% 승률:{win_rate:.1f}%")
                 return True
             else:
                 # Real sell
