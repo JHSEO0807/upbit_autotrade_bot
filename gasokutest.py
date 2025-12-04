@@ -28,6 +28,7 @@ class AccelerationDataCollector:
         self.max_accel_record = None  # 최대 가속도 기록
         self.min_accel_record = None  # 최소 가속도 기록
         self.max_accel_tracking = []  # 최대 가속도 이후 가격 변화 추적
+        self.min_accel_tracking = []  # 최소 가속도 이후 가격 변화 추적
 
         # 모니터링 대상 코인
         self.target_markets = []
@@ -259,6 +260,11 @@ class AccelerationDataCollector:
                 tracking_df = pd.DataFrame(self.max_accel_tracking)
                 tracking_df.to_excel(writer, sheet_name='최대가속도종목추적', index=False)
 
+            # 최소 가속도 종목 추적 시트
+            if self.min_accel_tracking:
+                tracking_df = pd.DataFrame(self.min_accel_tracking)
+                tracking_df.to_excel(writer, sheet_name='최소가속도종목추적', index=False)
+
         # 엑셀 스타일 적용
         self.apply_excel_formatting(filename)
         
@@ -267,13 +273,24 @@ class AccelerationDataCollector:
         print(f"파일명: {filename}")
         print(f"총 데이터: {len(self.data_history)}개 기록")
 
-        # 최대 가속도 종목의 최종 결과 출력
+        # 최대/최소 가속도 종목의 최종 결과 출력
         if self.max_accel_tracking:
             last_tracking = self.max_accel_tracking[-1]
-            print(f"\n📊 최대 가속도 종목 분석:")
+            print(f"\n🔥 최대 가속도 종목 분석:")
             print(f"   종목: {last_tracking['종목']}")
-            print(f"   최대가속도: {last_tracking['최대가속도']:+.4f}%p")
-            print(f"   발생시간: {last_tracking['최대가속도발생시간']}")
+            print(f"   가속도: {last_tracking['가속도(%p)']:+.4f}%p")
+            print(f"   발생시간: {last_tracking['가속도발생시간']}")
+            print(f"   발생시가격: {last_tracking['발생시가격']:,.0f}원")
+            print(f"   최종가격: {last_tracking['현재가격']:,.0f}원")
+            print(f"   가격변화: {last_tracking['가격변화(%)']:+.2f}%")
+            print(f"   경과시간: {last_tracking['경과시간(분)']:.1f}분")
+
+        if self.min_accel_tracking:
+            last_tracking = self.min_accel_tracking[-1]
+            print(f"\n❄️  최소 가속도 종목 분석:")
+            print(f"   종목: {last_tracking['종목']}")
+            print(f"   가속도: {last_tracking['가속도(%p)']:+.4f}%p")
+            print(f"   발생시간: {last_tracking['가속도발생시간']}")
             print(f"   발생시가격: {last_tracking['발생시가격']:,.0f}원")
             print(f"   최종가격: {last_tracking['현재가격']:,.0f}원")
             print(f"   가격변화: {last_tracking['가격변화(%)']:+.2f}%")
@@ -401,9 +418,9 @@ class AccelerationDataCollector:
 
                             tracking_record = {
                                 '측정시간': timestamp,
-                                '최대가속도발생시간': max_accel_time,
+                                '가속도발생시간': max_accel_time,
                                 '종목': max_accel_market,
-                                '최대가속도': self.max_accel_record['가속도(%p)'],
+                                '가속도(%p)': self.max_accel_record['가속도(%p)'],
                                 '발생시가격': max_accel_price,
                                 '현재가격': current_price,
                                 '가격변화(%)': price_change_pct,
@@ -411,6 +428,31 @@ class AccelerationDataCollector:
                                                datetime.strptime(max_accel_time, '%Y-%m-%d %H:%M:%S')).total_seconds() / 60
                             }
                             self.max_accel_tracking.append(tracking_record)
+
+                    # 최소 가속도 종목의 가격 변화 추적
+                    if self.min_accel_record:
+                        min_accel_market = self.min_accel_record['종목']
+                        min_accel_price = self.min_accel_record['현재가']
+                        min_accel_time = self.min_accel_record['시간']
+
+                        # 현재 가격 찾기
+                        current_record = next((r for r in records if r['종목'] == min_accel_market), None)
+                        if current_record:
+                            current_price = current_record['현재가']
+                            price_change_pct = ((current_price - min_accel_price) / min_accel_price) * 100
+
+                            tracking_record = {
+                                '측정시간': timestamp,
+                                '가속도발생시간': min_accel_time,
+                                '종목': min_accel_market,
+                                '가속도(%p)': self.min_accel_record['가속도(%p)'],
+                                '발생시가격': min_accel_price,
+                                '현재가격': current_price,
+                                '가격변화(%)': price_change_pct,
+                                '경과시간(분)': (datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S') -
+                                               datetime.strptime(min_accel_time, '%Y-%m-%d %H:%M:%S')).total_seconds() / 60
+                            }
+                            self.min_accel_tracking.append(tracking_record)
 
                     # 상태 출력
                     self.print_current_status(records)
