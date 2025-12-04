@@ -9,10 +9,10 @@ import os
 class AccelerationDataCollector:
     """가속도 데이터 수집 및 엑셀 저장"""
     
-    def __init__(self, 
+    def __init__(self,
                  top_n=20,
                  check_interval=10,
-                 duration_minutes=30):
+                 duration_minutes=None):
         
         self.top_n = top_n
         self.check_interval = check_interval
@@ -281,7 +281,10 @@ class AccelerationDataCollector:
         print(f"📊 가속도 데이터 수집 시작")
         print(f"{'='*80}")
         print(f"수집 간격: {self.check_interval}초")
-        print(f"수집 시간: {self.duration_minutes}분")
+        if self.duration_minutes:
+            print(f"수집 시간: {self.duration_minutes}분")
+        else:
+            print(f"수집 시간: 무제한 (Ctrl+C로 종료)")
         print(f"대상 종목: 상위 {self.top_n}개")
         print(f"{'='*80}")
         
@@ -293,7 +296,9 @@ class AccelerationDataCollector:
             return
         
         print(f"✅ 모니터링 시작... (Ctrl+C로 중지)")
-        print(f"⏰ 예상 종료 시간: {(datetime.now().timestamp() + self.duration_minutes * 60)}")
+        if self.duration_minutes:
+            end_time = datetime.fromtimestamp(datetime.now().timestamp() + self.duration_minutes * 60)
+            print(f"⏰ 예상 종료 시간: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         start_time = time.time()
         iteration = 0
@@ -302,12 +307,12 @@ class AccelerationDataCollector:
             while True:
                 iteration += 1
                 elapsed_minutes = (time.time() - start_time) / 60
-                
-                # 시간 종료 체크
-                if elapsed_minutes >= self.duration_minutes:
+
+                # 시간 종료 체크 (duration_minutes가 설정된 경우만)
+                if self.duration_minutes and elapsed_minutes >= self.duration_minutes:
                     print(f"\n⏰ 설정 시간({self.duration_minutes}분) 도달. 종료합니다.")
                     break
-                
+
                 # 데이터 수집
                 tickers = self.get_target_tickers()
                 
@@ -320,10 +325,14 @@ class AccelerationDataCollector:
                     
                     # 상태 출력
                     self.print_current_status(records)
-                    
-                    remaining = self.duration_minutes - elapsed_minutes
-                    print(f"⏱️  진행: {iteration}회차 | 경과: {elapsed_minutes:.1f}분 | "
-                          f"남은시간: {remaining:.1f}분 | 총 데이터: {len(self.data_history)}개")
+
+                    if self.duration_minutes:
+                        remaining = self.duration_minutes - elapsed_minutes
+                        print(f"⏱️  진행: {iteration}회차 | 경과: {elapsed_minutes:.1f}분 | "
+                              f"남은시간: {remaining:.1f}분 | 총 데이터: {len(self.data_history)}개")
+                    else:
+                        print(f"⏱️  진행: {iteration}회차 | 경과: {elapsed_minutes:.1f}분 | "
+                              f"총 데이터: {len(self.data_history)}개")
                 
                 time.sleep(self.check_interval)
                 
@@ -365,7 +374,7 @@ if __name__ == "__main__":
     collector = AccelerationDataCollector(
         top_n=20,              # 상위 20개 종목
         check_interval=30,     # 30초마다 수집
-        duration_minutes=30    # 30분 동안 수집
+        duration_minutes=None  # 무제한 (Ctrl+C로 종료)
     )
     
     collector.run()
