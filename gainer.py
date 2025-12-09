@@ -1,4 +1,3 @@
-# rank_momentum_rsi_turn_3min.py
 import time
 import uuid
 import json
